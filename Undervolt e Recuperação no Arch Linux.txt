@@ -1,0 +1,58 @@
+1. Configuração do Intel-Undervolt
+Assumindo que você instalou via yay ou pacman (comando padrão para Arch):
+
+Bash
+# Instalação do pacote
+yay -S intel-undervolt
+
+# Edição do arquivo de configuração
+sudo nano /etc/intel-undervolt.conf
+Nota: Dentro do arquivo, alteramos a linha referente à CPU (e cache) para -80.
+
+2. Comandos para aplicar e gerenciar o Undervolt
+Bash
+# Aplicar as configurações manualmente sem reiniciar
+sudo intel-undervolt apply
+
+# LER a configuração atual (para conferir se o -80 foi aceito)
+sudo intel-undervolt read
+
+# Habilitar o serviço para aplicar automaticamente no boot (use com cautela)
+sudo systemctl enable intel-undervolt.service
+
+# Parar o serviço (útil se o sistema estiver instável)
+sudo systemctl stop intel-undervolt.service
+3. Procedimento de Emergência (Resgate via GRUB)
+Quando o sistema congelou e não entrava na interface gráfica:
+
+Na tela do GRUB, selecionou a entrada do Arch Linux e apertou e.
+
+Na linha iniciada por linux, adicionou ao final: systemd.unit=multi-user.target.
+
+Pressionou F10 para iniciar apenas em modo texto.
+
+Após logar no terminal, editou novamente a config para corrigir o valor:
+
+Bash
+sudo nano /etc/intel-undervolt.conf
+4. Testes de Estabilidade (Stress Test)
+Para validar se o -80 era seguro, utilizamos o mprime (Prime95):
+
+Bash
+# Execução do teste de estresse contínuo
+mprime
+(Durante este processo, ignoramos os erros de rede "PrimeNet" e focamos nos testes de cálculo "Lucas-Lehner").
+
+5. Auditoria e Logs
+Para verificar se o sistema registrou falhas de hardware ou erros do kernel durante as tentativas:
+
+Bash
+# Filtrar erros do boot atual
+sudo journalctl -b 0 -p err
+6. Considerações Adicionais
+Monitoramento: Utilizamos o conky (ou a interface do sistema) para monitorar CPU Usage e CPU Temp durante o teste de estresse.
+
+Comportamento da Bateria: Identificamos que a redução da voltagem melhorou significativamente a eficiência térmica, resultando em uma estimativa de autonomia de bateria muito superior (chegando a 8h+).
+
+Recomendação final: Mantenha esse log salvo. Sempre que quiser testar um valor mais agressivo, siga a ordem: editar -> apply -> testar com mprime -> só se estiver 100% estável, considere usar o systemctl enable.
+ Isso evita que você tenha que refazer o procedimento de resgate no GRUB.
