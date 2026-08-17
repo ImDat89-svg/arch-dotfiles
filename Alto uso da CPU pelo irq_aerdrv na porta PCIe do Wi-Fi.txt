@@ -1,0 +1,48 @@
+Problema:
+Estou enfrentando um gargalo severo no uso da CPU causado pelo irq/122-aerdrv, que dispara constantemente milhões de interrupções (AER - Relatório Avançado de Erros).
+
+Desativar a porta através do comando `unbind` (`/sys/bus/pci/drivers/pcieport/unbind`) resolveu a sobrecarga da CPU, mas desativou completamente minha placa Wi-Fi, já que ambas compartilham a mesma ponte PCIe. Adicionar `pci=noaer` aos parâmetros do kernel não funcionou/foi aplicado corretamente devido a configurações de sobrescrita do bootloader/EFI.
+
+Solução:
+Em vez de desativar toda a porta PCIe ou alterar parâmetros do kernel, você pode silenciar apenas o registro de relatório de erros PCIe diretamente no nível do hardware usando o comando `setpci`. Isso mantém a interface Wi-Fi totalmente operacional e interrompe a sobrecarga de interrupções.
+Passo 1: Identifique a porta PCIe com problema.
+
+Verifique qual dispositivo está causando a tempestade de IRQ:
+Bash
+
+grep -i "aerdrv" /proc/interrupts
+
+No meu caso, estava acionando milhões de interrupções no dispositivo 0000:00:1d.0.
+Passo 2: Silenciar o registo de erros AER
+
+Execute o comando setpci direcionado diretamente ao registro de controle do dispositivo PCIe dessa porta:
+Bash
+
+sudo setpci -s 0000:00:1d.0 CAP_EXP+0x08.w=0x0000
+
+O uso da CPU voltou imediatamente ao normal e o Wi-Fi (wlo1) permaneceu totalmente conectado.
+Passo 3: Tornar a configuração persistente após reinicializações via systemd.
+
+Criar um serviço único do systemd:
+Bash
+
+sudo systemctl edit --force --full disable-aer.service
+
+Cole a seguinte configuração:
+Ini, TOML
+
+[Unit]
+Description=Silenciar o relatório de erros AER PCIe para a ponte Wi-Fi
+After=multi-user.target
+
+[Serviço]
+Tipo=disparo único
+ExecStart=/usr/bin/setpci -s 0000:00:1d.0 CAP_EXP+0x08.w=0x0000
+
+[Instalar]
+WantedBy=multi-user.target
+
+Ative o serviço:
+Bash
+
+sudo systemctl enable disable-aer.service
