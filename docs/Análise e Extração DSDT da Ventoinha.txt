@@ -1,0 +1,111 @@
+Para começar a caçar o método ou registrador da ventoinha nas entranhas da sua BIOS usando o Arch Linux, você vai precisar extrair e descompilar as tabelas ACPI. Aqui estão os comandos exatos que você precisa rodar no terminal para iniciar essa investigação:
+
+1. Instalar as ferramentas necessárias
+Se você ainda não tiver o pacote do compilador ACPI instalado, use o gerenciador de pacotes do Arch:
+
+sudo pacman -S acpica
+
+2. Extrair as tabelas ACPI do sistema
+Crie uma pasta de trabalho (para não bagunçar o seu diretório), extraia as tabelas brutas e converta-as:
+
+mkdir acpi_work && cd acpi_work
+sudo acpidump > acpidump.out
+acxtract acpidump.out
+
+O comando acxtract vai separar vários arquivos, sendo o principal deles o dsdt.dat.
+
+3. Descompilar o arquivo DSDT para formato legível (.dsl)
+Converta o arquivo binário da DSDT em um código-fonte de texto legível usando o descompilador (iasl):
+
+iasl -d dsdt.dat
+
+Isso vai gerar o arquivo dsdt.dsl. É nele que toda a lógica da BIOS, zonas térmicas e métodos de energia estão escritos.
+
+4. Como caçar os parâmetros da ventoinha no arquivo gerado?
+Agora que você tem o arquivo dsdt.dsl, em vez de ler tudo manualmente (já que ele é enorme), use o grep ou abra o arquivo em um editor de texto (como nano ou vim) para buscar pelas palavras-chave que controlam o hardware:
+
+Para procurar menções à ventoinha:
+grep -i "fan" dsdt.dsl
+
+Para procurar zonas térmicas (como o ACPI TZ que disparava):
+grep -i "thermalzone" dsdt.dsl
+
+Para procurar o Controlador Embutido (Embedded Control / EC):
+grep -i "EmbeddedControl" dsdt.dsl
+
+Dentro do dsdt.dsl, você vai achar blocos de código onde aparecem métodos como _STA (Status), _CRT (temperatura crítica de desligamento), ou operações de leitura e escrita em registradores hexadecimais do EC.
+
+Um aviso de cautela: mexer e recompilar esse arquivo para injetar um override via initramfs exige cuidado cirúrgico. Se algum método de controle de fan for mapeado no endereço errado do EC da sua placa-mãe, é exatamente isso que causa o conflito que desliga a máquina por segurança. Quer tentar rodar a extração e o grep para dar uma olhada no que o seu dsdt.dsl retorna?
+
+---
+
+1. Criar um serviço no Systemd (Inicialização automática)
+Você pode criar um serviço simples que aplica o comando de escrita no EC logo após o boot.
+
+Crie um arquivo de serviço:
+sudo nano /etc/systemd/system/hp-fan.service
+
+Cole a seguinte estrutura dentro dele:
+
+[Unit]
+Description=Aplica o perfil fixo da ventoinha HP no EC
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'modprobe ec_sys write_support=1 && printf "\\\\x40" > /sys/kernel/debug/ec/ec0/io'
+
+[Install]
+WantedBy=multi-user.target
+
+Salve o arquivo e habilite o serviço para rodar com privilégios de root em todo boot:
+sudo systemctl daemon-reload
+sudo systemctl enable hp-fan.service
+"""
+
+with open("guia_acpi_systemd.txt", "w", encoding="utf-8") as f:
+    f.write(content)
+
+--------------
+
+Como testar valores graduais com segurança:
+Escrever um valor intermediário (exemplo: 0x40 ou 0x80):
+Em vez de ir direto para o 100% (0xFF ou 255 em decimal), teste valores parciais para ver se a ventoinha começa a girar de forma suave. Você pode usar o printf direcionado para o arquivo de IO do EC:
+
+Bash
+sudo printf "\x40" | sudo dd of=/sys/kernel/debug/ec/ec0/io seek=244 bs=1 count=1 conv=notrunc
+(O \x40 é um valor hexadecimal intermediário. Você pode tentar testar \x20, \x40, \x60, \x80, etc.)
+
+O que observar:
+Assim que rodar o comando de escrita, escute o barulho da ventoinha e monitore imediatamente o sensor térmico (com o seu Conky ou sensors) para ver se o valor sobe ou se estabiliza.
+
+Aqui está o script ajustado para ligar em 60°C (no talo 0xFF) e desligar abaixo de 30°C:
+
+Bash
+sudo modprobe ec_sys write_support=1 2>/dev/null
+
+ESTADO_ATUAL=""
+
+while true; do
+    # Pega a temperatura atual da zona térmica
+    TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+    TEMP=$((TEMP / 1000))
+
+    # Nova regra:
+    # - Liga somente acima de 60°C (no talo: 0xFF)
+    # - Desliga somente abaixo de 30°C (desligada: 0x00)
+    if [ "$TEMP" -ge 60 ] && [ "$ESTADO_ATUAL" != "LIGADO" ]; then
+        printf "\xFF" | sudo dd of=/sys/kernel/debug/ec/ec0/io seek=244 bs=1 count=1 conv=notrunc 2>/dev/null
+        echo "[$(date +%T)] Temp: ${TEMP}°C -> Passou de 60°C! Ventoinha no máximo (0xFF)."
+        ESTADO_ATUAL="LIGADO"
+    elif [ "$TEMP" -le 30 ] && [ "$ESTADO_ATUAL" != "DESLIGADO" ]; then
+        printf "\x00" | sudo dd of=/sys/kernel/debug/ec/ec0/io seek=244 bs=1 count=1 conv=notrunc 2>/dev/null
+        echo "[$(date +%T)] Temp: ${TEMP}°C -> Esfriou abaixo de 30°C! Ventoinha desligada."
+        ESTADO_ATUAL="DESLIGADO"
+    fi
+
+    sleep 3
+done
+
+
+
